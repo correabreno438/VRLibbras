@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <script>
+      // Força o WebGL a guardar a imagem desenhada (preserveDrawingBuffer).
+      // Sem isso, no celular a cópia do avatar para as duas telas sai vazia.
+      (function () {
+        var original = HTMLCanvasElement.prototype.getContext;
+        HTMLCanvasElement.prototype.getContext = function (tipo, atributos) {
+          if (tipo && String(tipo).indexOf("webgl") !== -1) {
+            atributos = Object.assign({}, atributos || {}, { preserveDrawingBuffer: true });
+          }
+          var contexto = original.call(this, tipo, atributos);
+          if (contexto && tipo && String(tipo).indexOf("webgl") !== -1) {
+            window.__glAvatar = contexto; // a página principal lê os pixels daqui
+          }
+          return contexto;
+        };
+      })();
+    </script>
+
+    <title>Unity WebGL Player | Vlibras</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+      }
+      #gameContainer {
+        width: 100vw;
+        height: 100vh;
+        background-color: transparent !important;
+      }
+      canvas {
+        width: 100% !important;
+        height: 100% !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="gameContainer"></div>
+
+    <script src="unity-loader.js"></script>
+    <script src="index.js"></script>
+  </body>
+</html>

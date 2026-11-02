@@ -1,0 +1,36 @@
+# Dependências (recriadas com "npm install")
+node_modules/
+
+# Build de produção (recriado com "npm run build")
+dist/
+build/
+
+# Segredos e certificados locais
+.env
+.env.*
+*.pem
+*.key
+*.crt
+
+# Logs
+*.log
+npm-debug.log*
+
+# Cache de ferramentas
+.vite/
+.cache/
+.parcel-cache/
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor (mantém só as configurações compartilháveis)
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Arquivos temporários
+*.tmp
+*.bak
