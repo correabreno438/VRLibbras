@@ -121,7 +121,10 @@ if ("serviceWorker" in navigator) {
 const VLIBRAS_PATH = "/vlibras-app";
 // Velocidade do avatar: 1 = normal, 1.5 = rápido, 2 = bem rápido (intérprete
 // experiente), 2.5 = máximo. Se ficar difícil de acompanhar, diminua.
-window.VLIBRAS_VELOCIDADE = 2;
+window.VLIBRAS_VELOCIDADE = (() => {
+  const v = Number(new URLSearchParams(location.search).get("velocidade"));
+  return Number.isFinite(v) && v > 0 ? v : 2; // 1 = normal, 2 = mais rápido; ?velocidade=1.5
+})();
 const ESPERA_BOAS_VINDAS_MS = 800; // pequena folga depois que o avatar carrega
 const ESPERA_MAXIMA_AVATAR_MS = 20000; // se o aviso de "terminei" nunca chegar, segue em frente
 const LIMITE_CARREGAR_MS = 40000; // se o avatar nunca avisar que carregou
@@ -318,7 +321,14 @@ function recorteDoAvatar(w, h) {
   return { sx, sy, sw: Math.max(1, sx1 - sx), sh: Math.max(1, h - sy) };
 }
 
-function lerQuadroWebGL(win) {
+let bufPixels32 = null;
+let imagem32 = null;
+let quadrosDesdeLeituraCompleta = 0;
+
+// Lê só a região do boneco (e, de tempos em tempos, o quadro inteiro, para
+// descobrir se ele cresceu). Trabalha com blocos de 32 bits e só mexe pixel a
+// pixel nas bordas: bem mais leve para o celular, então a animação fica fluida.
+function lerQuadroWebGL(win, regiao, completo) {
   // O contexto é guardado por unity/index.html em window.__glAvatar. Não
   // pedimos um contexto novo aqui: isso quebraria o avatar.
   glAvatar = win.__glAvatar || null;
@@ -330,87 +340,113 @@ function lerQuadroWebGL(win) {
   const w = gl.drawingBufferWidth;
   const h = gl.drawingBufferHeight;
   if (!w || !h) return null;
-  if (!bufPixels || bufPixels.length !== w * h * 4) {
-    bufPixels = new Uint8Array(w * h * 4);
-    quadroTemp.width = w;
-    quadroTemp.height = h;
-    imagemTemp = new ImageData(w, h);
-  }
-  gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, bufPixels);
 
-  const src = bufPixels;
-  const dst = imagemTemp.data;
+  const rx = completo ? 0 : regiao.sx;
+  const ry = completo ? 0 : regiao.sy;
+  const rw = completo ? w : regiao.sw;
+  const rh = completo ? h : regiao.sh;
+  const glY = h - ry - rh; // o WebGL conta de baixo para cima
+
+  if (!bufPixels || bufPixels.length !== rw * rh * 4) {
+    bufPixels = new Uint8Array(rw * rh * 4);
+    bufPixels32 = new Uint32Array(bufPixels.buffer);
+    imagemTemp = new ImageData(rw, rh);
+    imagem32 = new Uint32Array(imagemTemp.data.buffer);
+    quadroTemp.width = rw;
+    quadroTemp.height = rh;
+  }
+  gl.readPixels(rx, glY, rw, rh, gl.RGBA, gl.UNSIGNED_BYTE, bufPixels);
+
+  const src32 = bufPixels32;
+  const dst32 = imagem32;
+
+  // Tem transparência? (amostra de alguns pontos)
   let alfaMax = 0;
-  let corMax = 0;
-  for (let i = 0; i < src.length; i += 28) {
-    if (src[i + 3] > alfaMax) alfaMax = src[i + 3];
-    const m = Math.max(src[i], src[i + 1], src[i + 2]);
-    if (m > corMax) corMax = m;
+  for (let i = 0; i < src32.length; i += 7) {
+    const a = src32[i] >>> 24;
+    if (a > alfaMax) alfaMax = a;
   }
   const semAlfa = alfaMax === 0;
   const atributos = gl.getContextAttributes() || {};
   const premultiplicado = atributos.premultipliedAlpha !== false;
-  infoLeitura = "alfa " + alfaMax + " cor " + corMax + (premultiplicado ? " pm" : " reta");
+  infoLeitura = "alfa " + alfaMax + (premultiplicado ? " pm" : " reta") + (completo ? " cheio" : " recorte");
 
-  let caixaX0 = w;
-  let caixaX1 = -1;
-  let caixaY0 = h;
-  let pontos = 0;
-  for (let y = 0; y < h; y++) {
-    const s = (h - 1 - y) * w * 4; // readPixels vem de cabeça para baixo
-    const d = y * w * 4;
-    for (let x = 0; x < w * 4; x += 4) {
-      let r = src[s + x];
-      let g = src[s + x + 1];
-      let b = src[s + x + 2];
-      const a = src[s + x + 3];
-      let alfaSaida = a;
-      if (semAlfa) {
-        // O WebGL não entregou transparência: o preto vira branco opaco.
-        alfaSaida = 255;
-        if (r === 0 && g === 0 && b === 0) r = g = b = 255;
-      } else if (premultiplicado && a > 0 && a < 255) {
-        // ImageData espera cor "reta" (sem multiplicar pela transparência).
-        r = Math.min(255, (r * 255) / a);
-        g = Math.min(255, (g * 255) / a);
-        b = Math.min(255, (b * 255) / a);
-      }
-      dst[d + x] = r;
-      dst[d + x + 1] = g;
-      dst[d + x + 2] = b;
-      dst[d + x + 3] = alfaSaida;
+  // Vira de cabeça para baixo (o WebGL entrega o quadro invertido).
+  for (let y = 0; y < rh; y++) {
+    const s = (rh - 1 - y) * rw;
+    dst32.set(src32.subarray(s, s + rw), y * rw);
+  }
 
-      // Onde está o boneco (pixels que não são transparentes).
-      if (alfaSaida > 40 && !semAlfa) {
-        const px = x >> 2;
-        if (px < caixaX0) caixaX0 = px;
-        if (px > caixaX1) caixaX1 = px;
-        if (y < caixaY0) caixaY0 = y;
-        pontos++;
+  if (semAlfa) {
+    // O WebGL não entregou transparência: o preto vira branco opaco.
+    for (let i = 0; i < dst32.length; i++) {
+      dst32[i] = (dst32[i] & 0x00ffffff) === 0 ? 0xffffffff : (dst32[i] | 0xff000000) >>> 0;
+    }
+  } else {
+    let caixaX0 = rw;
+    let caixaX1 = -1;
+    let caixaY0 = rh;
+    let pontos = 0;
+    for (let y = 0; y < rh; y++) {
+      const d = y * rw;
+      for (let x = 0; x < rw; x++) {
+        const v = dst32[d + x];
+        const a = v >>> 24;
+        if (a === 0) continue;
+        if (a < 255 && premultiplicado) {
+          // ImageData espera cor "reta" (sem multiplicar pela transparência).
+          const r = Math.min(255, ((v & 255) * 255) / a) | 0;
+          const g = Math.min(255, (((v >>> 8) & 255) * 255) / a) | 0;
+          const b = Math.min(255, (((v >>> 16) & 255) * 255) / a) | 0;
+          dst32[d + x] = ((a << 24) | (b << 16) | (g << 8) | r) >>> 0;
+        }
+        if (a > 40) {
+          if (x < caixaX0) caixaX0 = x;
+          if (x > caixaX1) caixaX1 = x;
+          if (y < caixaY0) caixaY0 = y;
+          pontos++;
+        }
       }
     }
+    if (pontos > 300) registrarCaixaDoAvatar(caixaX0 + rx, caixaY0 + ry, caixaX1 + rx);
   }
-  if (pontos > 300) registrarCaixaDoAvatar(caixaX0, caixaY0, caixaX1);
   quadroTemp.getContext("2d").putImageData(imagemTemp, 0, 0);
-  return quadroTemp;
+  return { fonte: quadroTemp, rx, ry };
 }
 
 function copiarQuadroDoAvatar(win) {
-  // Sinalizando: ~30 cópias/s (fluido). Parado: ~7 cópias/s (poupa o celular).
-  if (performance.now() - ultimaCopiaEm < (avatarOcupado() ? 30 : 140)) return;
+  // Sinalizando: até ~60 cópias/s (fluido). Parado: ~7 cópias/s (poupa o celular).
+  // Se o reconhecimento de voz estiver atrasado, o avatar copia menos quadros para
+  // dar prioridade à legenda (assim nenhuma fala é perdida).
+  const vozAtrasada = blocosEnviados - blocosRespondidos > 3;
+  if (performance.now() - ultimaCopiaEm < (avatarOcupado() ? (vozAtrasada ? 45 : 14) : 140)) return;
   if (!canvasAvatar || !canvasAvatar.isConnected) canvasAvatar = win.document.querySelector("canvas");
   const origem = canvasAvatar;
   if (!avatarCarregado || !origem || !origem.width || !origem.height) return;
 
-  let fonte = null;
+  const gl = win.__glAvatar;
+  const W = gl ? gl.drawingBufferWidth : origem.width;
+  const H = gl ? gl.drawingBufferHeight : origem.height;
+  const regiao = recorteDoAvatar(W, H);
+  const completo = !caixaAvatar || ++quadrosDesdeLeituraCompleta >= 45;
+  if (completo) quadrosDesdeLeituraCompleta = 0;
+
+  let fonte = origem;
+  let sx = regiao.sx;
+  let sy = regiao.sy;
   try {
-    fonte = lerQuadroWebGL(win);
+    const leitura = lerQuadroWebGL(win, regiao, completo);
+    if (leitura) {
+      fonte = leitura.fonte;
+      sx = regiao.sx - leitura.rx;
+      sy = regiao.sy - leitura.ry;
+    }
   } catch (err) {
     infoLeitura = "erro " + err.message;
   }
-  if (!fonte) fonte = origem; // plano B: drawImage
+  const sw = regiao.sw;
+  const sh = regiao.sh;
 
-  const { sx, sy, sw, sh } = recorteDoAvatar(fonte.width, fonte.height);
   const largura = Math.min(sw, 360);
   const altura = Math.max(1, Math.round((sh * largura) / sw));
   destinosAvatar.forEach((destino) => {
@@ -543,9 +579,121 @@ function enviarParaWidget(texto) {
   enviarAgora(texto);
 }
 
+// O Vosk escreve números por extenso ("dois mil e vinte e seis"). O VLibras
+// sinaliza melhor números escritos em dígitos ("2026"), então convertemos.
+const NUM_UNIDADES = { zero: 0, um: 1, uma: 1, dois: 2, duas: 2, tres: 3, quatro: 4, cinco: 5, seis: 6, sete: 7, oito: 8, nove: 9,
+  dez: 10, onze: 11, doze: 12, treze: 13, catorze: 14, quatorze: 14, quinze: 15, dezesseis: 16, dezessete: 17, dezoito: 18, dezenove: 19 };
+const NUM_DEZENAS = { vinte: 20, trinta: 30, quarenta: 40, cinquenta: 50, sessenta: 60, setenta: 70, oitenta: 80, noventa: 90 };
+const NUM_CENTENAS = { cem: 100, cento: 100, duzentos: 200, duzentas: 200, trezentos: 300, trezentas: 300, quatrocentos: 400, quatrocentas: 400,
+  quinhentos: 500, quinhentas: 500, seiscentos: 600, seiscentas: 600, setecentos: 700, setecentas: 700, oitocentos: 800, oitocentas: 800,
+  novecentos: 900, novecentas: 900 };
+const NUM_MULT = { mil: 1000, milhao: 1e6, milhoes: 1e6, bilhao: 1e9, bilhoes: 1e9 };
+
+function semAcento(p) {
+  return p.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+}
+// Classe do número: 1 unidade, 2 dezena/teen, 3 centena, 4 mil, 5 milhão+
+function infoNumero(palavra) {
+  const p = semAcento(palavra);
+  if (p in NUM_UNIDADES) return { v: NUM_UNIDADES[p], c: NUM_UNIDADES[p] >= 10 ? 2 : 1, p };
+  if (p in NUM_DEZENAS) return { v: NUM_DEZENAS[p], c: 2, p };
+  if (p in NUM_CENTENAS) return { v: NUM_CENTENAS[p], c: 3, p };
+  if (p in NUM_MULT) return { v: NUM_MULT[p], c: NUM_MULT[p] === 1000 ? 4 : 5, p, mult: true };
+  return null;
+}
+
+function numerosParaDigitos(texto) {
+  const palavras = texto.split(/\s+/).filter(Boolean);
+  const saida = [];
+  let i = 0;
+  while (i < palavras.length) {
+    const inicio = infoNumero(palavras[i]);
+    if (!inicio) {
+      saida.push(palavras[i]);
+      i++;
+      continue;
+    }
+    // Junta as palavras seguintes que continuam o mesmo número.
+    const grupo = [inicio];
+    let j = i + 1;
+    while (j < palavras.length) {
+      const anterior = grupo[grupo.length - 1];
+      let k = j;
+      const comE = semAcento(palavras[k]) === "e";
+      if (comE) k++;
+      const prox = k < palavras.length ? infoNumero(palavras[k]) : null;
+      if (!prox) break;
+      const continua = prox.mult ? anterior.c < prox.c : prox.c < anterior.c && !(prox.c === 1 && anterior.c === 2 && anterior.v < 20);
+      if (!continua) break;
+      grupo.push(prox);
+      j = k + 1;
+    }
+    // "um"/"uma" sozinho é artigo, não número.
+    if (grupo.length === 1 && (grupo[0].p === "um" || grupo[0].p === "uma")) {
+      saida.push(palavras[i]);
+    } else {
+      let total = 0;
+      let atual = 0;
+      grupo.forEach((n) => {
+        if (n.mult) {
+          total += (atual || 1) * n.v;
+          atual = 0;
+        } else atual += n.v;
+      });
+      saida.push(String(total + atual));
+    }
+    i = j;
+  }
+  return saida.join(" ");
+}
+
+// Nomes próprios: o Vosk escreve tudo em minúsculas e o VLibras só soletra
+// (datilologia) palavras que reconhece como nome. Aqui marcamos os nomes com
+// letra maiúscula: (1) os que a pessoa escreve nesta lista e (2) as palavras
+// que vêm depois de "meu nome é", "me chamo", "professor", etc.
+// Exemplo: const NOMES_PROPRIOS = ["breno", "maria", "joão"];
+const NOMES_PROPRIOS = [];
+const GATILHOS_NOME = ["chamo", "chama", "chamado", "chamada"]; // até 3 palavras seguintes
+const GATILHOS_TITULO = ["professor", "professora", "doutor", "doutora", "seu", "dona", "senhor", "senhora", "colega", "amigo", "amiga"]; // 1 palavra
+const NAO_NOME = new Set(["e", "o", "a", "os", "as", "de", "do", "da", "dos", "das", "um", "uma", "que", "eu", "voce", "ele", "ela", "nao", "sim", "aqui", "hoje", "hora", "horas", "meu", "minha", "nome", "bom", "boa", "dia", "tarde", "noite", "tenho", "sou", "moro", "trabalho", "estou", "vou", "vim", "disse", "falou", "esta", "foi", "vai", "tem", "mais", "mas", "para", "com", "na", "no", "em"]);
+
+function capitalizar(p) {
+  return p.charAt(0).toUpperCase() + p.slice(1);
+}
+
+function marcarNomesProprios(texto) {
+  const palavras = texto.split(/\s+/).filter(Boolean);
+  const lista = new Set(NOMES_PROPRIOS.map(semAcento));
+  for (let i = 0; i < palavras.length; i++) {
+    const p = semAcento(palavras[i]);
+    if (lista.has(p)) palavras[i] = capitalizar(palavras[i]);
+    // "meu nome é X Y" / "me chamo X Y" / "professor X" / "chama X"
+    const ehNomeGatilho = p === "nome" && i + 1 < palavras.length && semAcento(palavras[i + 1]) === "e";
+    const gatilho = ehNomeGatilho ? i + 1 : GATILHOS_NOME.includes(p) || GATILHOS_TITULO.includes(p) ? i : -1;
+    const maximo = GATILHOS_TITULO.includes(p) ? 1 : 3;
+    if (gatilho >= 0) {
+      let marcados = 0;
+      for (let j = gatilho + 1; j < palavras.length && marcados < maximo; j++) {
+        const q = semAcento(palavras[j]);
+        if (NAO_NOME.has(q) || /^\d/.test(q) || infoNumero(q)) break;
+        palavras[j] = capitalizar(palavras[j]);
+        marcados++;
+      }
+    }
+  }
+  return palavras.join(" ");
+}
+
+function decimaisParaDigitos(texto) {
+  // "3 vírgula 5" -> "3,5"
+  return texto.replace(/(\d+)\s+v[ií]rgula\s+(\d+)/gi, "$1,$2");
+}
+
 function traduzirParaLibras(texto) {
   if (!texto || !texto.trim()) return;
-  enviarParaWidget(texto.trim());
+  const paraEnviar = marcarNomesProprios(decimaisParaDigitos(numerosParaDigitos(texto.trim())));
+  window.__ultimoTextoLibras = paraEnviar;
+  enviarParaWidget(paraEnviar);
 }
 
 iniciarWidgetVlibras();
@@ -587,9 +735,11 @@ const TEMPO_SILENCIO_MS = 1500;
 // as frases finalizadas ficam na tela (até uma pausa longa) e a parcial vem
 // logo depois delas.
 const LEGENDA_MAX_CARACTERES = 140;
-const LEGENDA_LIMPAR_APOS_MS = 5000;
+const LEGENDA_LIMPAR_APOS_MS = 5000; // mínimo; fica mais tempo em frases longas
+const LEGENDA_MS_POR_CARACTERE = 70;
 let legendaFixa = ""; // frases já finalizadas
 let parcialJaEnviado = "";
+let legendaParcialFixada = ""; // parcial que já foi para a legenda fixa (evita repetir)
 let timerLimparLegenda = null;
 
 function cortarNoInicio(texto) {
@@ -609,10 +759,11 @@ function fixarNaLegenda(frase) {
   legendaFixa = cortarNoInicio((legendaFixa + " " + frase).trim());
   mostrarLegenda("");
   clearTimeout(timerLimparLegenda);
+  const tempoNaTela = Math.min(12000, Math.max(LEGENDA_LIMPAR_APOS_MS, 1500 + legendaFixa.length * LEGENDA_MS_POR_CARACTERE));
   timerLimparLegenda = setTimeout(() => {
     legendaFixa = "";
     if (transcricaoAtiva) captionEl.textContent = "";
-  }, LEGENDA_LIMPAR_APOS_MS);
+  }, tempoNaTela);
 }
 
 // Volume (RMS) de um bloco de áudio: usado para só enviar ao Vosk quando há voz.
@@ -690,8 +841,10 @@ async function carregarModeloVoz() {
       silenceTimer = setTimeout(() => {
         if (ultimoParcial) {
           parcialJaEnviado = ultimoParcial;
+          fixarNaLegenda(ultimoParcial); // a fala fica na legenda mesmo que o Vosk não a finalize
           traduzirParaLibras(ultimoParcial);
           ultimoParcial = "";
+          legendaParcialFixada = parcialJaEnviado;
         }
       }, TEMPO_SILENCIO_MS);
     });
@@ -711,7 +864,14 @@ async function carregarModeloVoz() {
       }
       parcialJaEnviado = "";
 
-      fixarNaLegenda(texto);
+      if (legendaParcialFixada) {
+        // O começo desta frase já está na legenda: acrescenta só o que faltou.
+        const resto = texto.startsWith(legendaParcialFixada) ? texto.slice(legendaParcialFixada.length).trim() : texto;
+        legendaParcialFixada = "";
+        if (resto) fixarNaLegenda(resto);
+      } else {
+        fixarNaLegenda(texto);
+      }
       if (paraEnviar) traduzirParaLibras(paraEnviar);
     });
 
@@ -746,7 +906,7 @@ async function carregarModeloVoz() {
 // dá conta, as respostas atrasam e o atraso só cresce (comandos levando 10 s).
 // Por isso contamos enviados x respondidos e, se acumular fila, descartamos
 // áudio novo em vez de deixar a fila crescer.
-const FILA_MAXIMA_BLOCOS = 3;
+const FILA_MAXIMA_BLOCOS = 40; // até ~10 s de áudio esperando; só acima disso descarta (antes perdia falas)
 let blocosEnviados = 0;
 let blocosRespondidos = 0;
 let blocosDescartados = 0;
@@ -820,8 +980,8 @@ async function iniciarEscuta() {
 
     // Só manda áudio ao reconhecedor quando há voz (e um pouco depois, para ele
     // fechar a frase). Em silêncio o celular fica livre.
-    const LIMIAR_VOZ = 0.006;
-    const FOLGA_APOS_VOZ_MS = 1200;
+    const LIMIAR_VOZ = 0.004; // mais sensível: pega falas baixas e o começo das palavras
+    const FOLGA_APOS_VOZ_MS = 1500;
     let ultimaVozEm = 0;
     let estavaEnviando = false;
     const antes = []; // últimos blocos, para não cortar o começo da fala
@@ -850,7 +1010,15 @@ async function iniciarEscuta() {
         enviarAoVosk(amostras);
       } else {
         antes.push(amostras.slice());
-        if (antes.length > 3) antes.shift();
+        if (antes.length > 4) antes.shift();
+      }
+      // Acabou de falar: pede ao Vosk para fechar a frase agora, assim as
+      // últimas palavras não ficam presas esperando mais áudio.
+      if (estavaEnviando && !enviando && typeof reconhecedor.retrieveFinalResult === "function") {
+        try {
+          reconhecedor.retrieveFinalResult();
+          blocosEnviados++; // essa chamada também gera uma resposta
+        } catch (e) {}
       }
       estavaEnviando = enviando;
     };
@@ -1268,6 +1436,10 @@ requestAnimationFrame(atualizarOlhar);
 // preta ao redor, como nos aplicativos de realidade virtual. Ícones, legenda e
 // avatar ficam todos DENTRO dessa moldura, com a mesma margem.
 // Ajustes pela URL (em %):
+//   ?zoom=1.15      aumento da imagem da câmera (1 = sem aumento)
+//   ?separacao=1.5  aproxima as duas imagens do centro, em % (negativo afasta)
+//   ?ajuste         mostra botões para regular zoom e separação (fica salvo no celular)
+//   ?velocidade=2   velocidade do avatar (1 = normal)
 //   ?quadro=92   altura da imagem em relação à tela (menor = borda preta maior)
 //   ?forma=1.08  proporção largura/altura da imagem (maior = mais larga)
 //   ?curva=4     quanto as bordas "estufam" (0 = retângulo reto)
@@ -1278,6 +1450,21 @@ requestAnimationFrame(atualizarOlhar);
 //   ?avatarmargem=3 distância do avatar até a borda da imagem (%)
 const parametrosUrl = new URLSearchParams(location.search);
 const quadroAltura = Number(parametrosUrl.get("quadro") ?? 92);
+// Zoom da câmera e separação entre as duas imagens (para o encaixe nas lentes).
+const lerNumeroSalvo = (nome, chave, padrao) => {
+  if (parametrosUrl.has(nome)) {
+    const v = Number(parametrosUrl.get(nome));
+    if (Number.isFinite(v)) return v;
+  }
+  try {
+    const salvo = localStorage.getItem(chave);
+    if (salvo !== null && Number.isFinite(Number(salvo))) return Number(salvo);
+  } catch (e) {}
+  return padrao;
+};
+let ajusteZoom = lerNumeroSalvo("zoom", "libras-vr:zoom", 1.3);
+let ajusteDesloc = lerNumeroSalvo("desloc", "libras-vr:desloc", 0);
+let ajusteSeparacao = lerNumeroSalvo("separacao", "libras-vr:separacao", 1.5);
 const quadroForma = Number(parametrosUrl.get("forma") ?? 1.08);
 const avatarLado = parametrosUrl.get("avatar") === "esq" ? "esq" : "dir";
 const legendaModo = ["cima", "baixo"].includes(parametrosUrl.get("legenda")) ? parametrosUrl.get("legenda") : "auto";
@@ -1308,7 +1495,7 @@ document.body.appendChild(svgMoldura);
 const estiloTela = document.createElement("style");
 estiloTela.id = "estilo-tela";
 estiloTela.textContent = `
-  :root { --mx: ${margemUi}%; --my: ${margemUi}%; --aw: 0px; }
+  :root { --mx: ${margemUi}%; --my: ${margemUi}%; --aw: 0px; --zoom: ${ajusteZoom}; --sep: ${ajusteSeparacao}%; --desl: ${ajusteDesloc}%; }
   html, body { width: 100%; height: 100%; background: #000; }
   #stage { height: 100vh; height: 100dvh; width: 100vw; background: #000; }
   #stage.stereo #eyeLeft, #stage.stereo #eyeRight { width: 50%; border: 0; background: #000; }
@@ -1321,7 +1508,16 @@ estiloTela.textContent = `
     clip-path: url(#forma-moldura); -webkit-clip-path: url(#forma-moldura);
     overflow: hidden; background: #000;
   }
-  .moldura video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  #eyeLeft .moldura { left: calc(50% + var(--sep) + var(--desl)); }
+  #eyeRight .moldura { left: calc(50% - var(--sep) + var(--desl)); }
+  .moldura video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scale(var(--zoom)); }
+  #painel-ajuste {
+    flex-wrap: wrap; justify-content: center; max-width: 96vw;
+    position: fixed; z-index: 9999; left: 50%; bottom: 8px; transform: translateX(-50%);
+    display: flex; gap: 6px; align-items: center; padding: 6px 10px; border-radius: 12px;
+    background: rgba(0,0,0,0.8); color: #fff; font: 600 12px system-ui, sans-serif;
+  }
+  #painel-ajuste button { padding: 6px 10px; font-size: 14px; }
 
   /* Botões de toque, status de canto e barra única de legenda saem de cena:
      o controle é pela cabeça e tudo aparece dentro de cada olho. */
@@ -1462,3 +1658,39 @@ document.addEventListener("fullscreenchange", () => {
 });
 window.addEventListener("click", entrarTelaCheia);
 window.addEventListener("touchend", entrarTelaCheia);
+
+// ---- Painel de ajuste (só com ?ajuste no endereço) ----------------------
+function aplicarAjustes() {
+  document.documentElement.style.setProperty("--zoom", String(ajusteZoom));
+  document.documentElement.style.setProperty("--sep", ajusteSeparacao + "%");
+  document.documentElement.style.setProperty("--desl", ajusteDesloc + "%");
+  try {
+    localStorage.setItem("libras-vr:desloc", String(ajusteDesloc));
+    localStorage.setItem("libras-vr:zoom", String(ajusteZoom));
+    localStorage.setItem("libras-vr:separacao", String(ajusteSeparacao));
+  } catch (e) {}
+  const rotulo = document.getElementById("ajuste-valores");
+  if (rotulo) rotulo.textContent = "zoom " + ajusteZoom.toFixed(2) + " · separação " + ajusteSeparacao.toFixed(1) + "% · deslocar " + ajusteDesloc.toFixed(1) + "%";
+}
+if (parametrosUrl.has("ajuste")) {
+  const painel = document.createElement("div");
+  painel.id = "painel-ajuste";
+  painel.innerHTML =
+    '<button data-a="sep-">⟵ ⟶ afastar</button><button data-a="sep+">⟶ ⟵ aproximar</button>' +
+    '<button data-a="desl-">◀ deslocar</button><button data-a="desl+">deslocar ▶</button>' +
+    '<button data-a="zoom-">zoom −</button><button data-a="zoom+">zoom +</button>' +
+    '<span id="ajuste-valores"></span>';
+  document.body.appendChild(painel);
+  painel.addEventListener("click", (e) => {
+    const a = e.target.dataset && e.target.dataset.a;
+    if (!a) return;
+    if (a === "sep+") ajusteSeparacao = Math.round((ajusteSeparacao + 0.5) * 10) / 10;
+    if (a === "sep-") ajusteSeparacao = Math.round((ajusteSeparacao - 0.5) * 10) / 10;
+    if (a === "desl+") ajusteDesloc = Math.round((ajusteDesloc + 0.5) * 10) / 10;
+    if (a === "desl-") ajusteDesloc = Math.round((ajusteDesloc - 0.5) * 10) / 10;
+    if (a === "zoom+") ajusteZoom = Math.round((ajusteZoom + 0.05) * 100) / 100;
+    if (a === "zoom-") ajusteZoom = Math.max(1, Math.round((ajusteZoom - 0.05) * 100) / 100);
+    aplicarAjustes();
+  });
+  aplicarAjustes();
+}
