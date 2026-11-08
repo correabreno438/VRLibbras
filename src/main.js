@@ -133,6 +133,8 @@ let avatarCarregado = false;
 let prontoEm = null; // quando o avatar ficou pronto para traduzir
 let avatarTocando = false; // o avatar está sinalizando (ou carregando) agora
 let avatarTocandoDesde = 0;
+let avatarParouEm = 0;
+let textoFallbackSinal = ""; // frase enviada ao avatar (usada se não der para ler a glosa dele)
 let enviadoEm = 0; // quando mandamos a última frase
 let fila = []; // frases que chegaram enquanto o avatar ainda sinalizava
 let ultimaFrase = "";
@@ -249,7 +251,10 @@ window.addEventListener("message", (evento) => {
     const [tocando, , , carregando] = (dados.data || []).map((v) => v === "True");
     avatarTocando = tocando || carregando;
     if (avatarTocando) avatarTocandoDesde = Date.now();
-    else liberarFila();
+    else {
+      avatarParouEm = Date.now();
+      liberarFila();
+    }
   }
 });
 
@@ -557,6 +562,7 @@ function liberarFila() {
 setInterval(liberarFila, 300);
 
 function enviarAgora(texto) {
+  textoFallbackSinal = texto.toUpperCase();
   ultimaFrase = texto;
   ultimaFraseEm = Date.now();
   enviadoEm = Date.now();
@@ -779,7 +785,7 @@ function calcularNivel(amostras) {
 let transcricaoAtiva = false;
 let timerAviso = null;
 
-const DICA_INICIAL = "Olhe para baixo para abrir o menu";
+const DICA_INICIAL = "Leve a mira ao canto esquerdo para abrir as opções";
 
 function avisar(mensagem, voltarPara) {
   statusEl.textContent = mensagem;
@@ -949,7 +955,7 @@ setInterval(() => {
     "avatar " + tamanhoOrigem + " · cópias " + copiasFeitas + " · pontos " + pixelsAvatar +
     " · gl[" + infoLeitura + "]" +
     (document.body.classList.contains("avatar-direto") ? " · MODO DIRETO" : "");
-  diagEl.textContent = voz + "\n" + avatar + "\n" + textoSensor;
+  diagEl.textContent = voz + "\n" + avatar + "\n" + diagTextoAvatar() + "\n" + textoSensor;
 }, 500);
 
 async function iniciarEscuta() {
@@ -1062,32 +1068,24 @@ micBtn.addEventListener("click", async () => {
 });
 
 // ---------------------------------------------------------------
-// 5) Menu por movimentos de cabeça (sem tocar no celular, sem falar)
+// 5) Controle pela cabeça com mira (sem tocar no celular, sem falar)
 // ---------------------------------------------------------------
-// Como usar:
-//   1) OLHE PARA BAIXO: aparecem, no centro das duas telas, os ícones
-//      Microfone, Legenda e VLibras.
-//   2) VIRE ou INCLINE a cabeça para a direita ou para a esquerda: a seleção
-//      (borda amarela) passa para o ícone do lado. Um movimento = um ícone;
-//      volte ao centro para poder fazer outro.
-//   3) OLHE PARA CIMA (acima da linha do horizonte) e segure um instante:
-//      liga ou desliga a opção selecionada. Só voltar a olhar para a frente
-//      NÃO aciona nada.
-// Se a pessoa ficar uns 3 segundos sem se mexer, os ícones somem sozinhos.
+// Uma mira (pontinho) acompanha o movimento da cabeça.
+//   1) Leve a mira até a BORDA ESQUERDA da imagem: as opções aparecem ali,
+//      em coluna, pequenas.
+//   2) Leve a mira para CIMA de uma opção e fique olhando: um anel enche e,
+//      quando fecha, a opção liga ou desliga.
+//   3) Volte a mira para o CENTRO: as opções somem.
 // Usa o giroscópio do celular (funciona offline).
 const OLHAR = {
-  abrirAbaixoDe: -15, // graus: olhar abaixo disso abre o menu
-  reabrirAcimaDe: -8, // depois de fechar, só abre de novo após a cabeça subir disso
-  girarParaTrocar: 9, // graus de giro (virar a cabeça) para passar de ícone
-  inclinarParaTrocar: 12, // graus de inclinação (orelha no ombro) para passar de ícone
-  voltarAoCentro: 0.45, // fração do movimento: abaixo disso conta como "voltou ao centro"
-  pausaEntrePassosMs: 450, // tempo mínimo entre uma troca de ícone e outra
-  olharParaCimaAcima: 12, // graus ACIMA do horizonte para ligar/desligar
-  segurarParaCimaMs: 300, // quanto tempo segurar olhando para cima
-  rearmarAbaixoDe: 4, // depois de acionar, precisa baixar a cabeça até aqui para poder acionar de novo
-  tempoMinimoAbertoMs: 500, // evita acionar logo que o menu abre
-  movimentoMinimo: 3.5, // graus que contam como "se mexeu" (para o menu não sumir)
-  tempoSemMovimentoMs: 2800, // sem se mexer por esse tempo, o menu some
+  graus_horizontal: 24, // giro da cabeça que leva a mira do centro até a borda
+  graus_vertical: 20, // subida/descida da cabeça que leva a mira do centro até a borda
+  abrirAbaixoDeX: 14, // % da largura: mira abaixo disso (borda esquerda) abre as opções
+  fecharAcimaDeX: 36, // % da largura: mira passando disso (voltou ao centro) fecha as opções
+  abrirSegurarMs: 250, // tempo com a mira na borda para abrir (evita abrir sem querer)
+  tempoParaAcionarMs: 1200, // tempo com a mira sobre a opção até ligar/desligar
+  esperaAposAbrirMs: 600, // logo que abre, não aciona nada por este tempo
+  recentrar: 0.002, // quão rápido o "centro" acompanha a postura da cabeça (0 = nunca)
 };
 
 const itensOlhar = [
@@ -1111,119 +1109,94 @@ const itensOlhar = [
   },
 ];
 
-// O estilo do menu fica aqui dentro (e não no index.html) para o menu aparecer
-// mesmo que o index.html esteja numa versão mais antiga.
+// O estilo fica aqui dentro (e não no index.html) para aparecer mesmo que o
+// index.html esteja numa versão mais antiga.
 const estiloOlhar = document.createElement("style");
 estiloOlhar.id = "estilo-olhar";
 estiloOlhar.textContent = `
   .olhar-camada { position: absolute; inset: 0; pointer-events: none; z-index: 15; }
-  .olhar-dica {
-    position: absolute; top: 8px; left: 50%; transform: translateX(-50%) scale(var(--e, 1));
-    color: rgba(255,255,255,0.75); font: 600 11px system-ui, sans-serif;
-    text-shadow: 0 1px 3px #000; white-space: nowrap; transition: opacity 0.2s;
+  .olhar-lista {
+    position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+    display: flex; flex-direction: column; gap: 10px;
+    opacity: 0; visibility: hidden; transition: opacity 0.15s;
   }
-  .olhar-camada.aberto .olhar-dica { opacity: 0; }
-  .olhar-menu {
-    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -58%) scale(var(--e, 1));
-    display: flex; gap: 16px; align-items: flex-start;
-    opacity: 0; visibility: hidden; transition: opacity 0.2s;
-  }
-  .olhar-camada.aberto .olhar-menu { opacity: 1; visibility: visible; }
+  .olhar-camada.aberto .olhar-lista { opacity: 1; visibility: visible; }
   .olhar-item {
-    width: 76px; display: flex; flex-direction: column; align-items: center;
-    transition: transform 0.15s; color: #fff; font-family: system-ui, sans-serif;
+    display: flex; align-items: center; gap: 6px; color: #fff;
+    font-family: system-ui, sans-serif; transition: transform 0.15s; transform-origin: left center;
   }
-  .olhar-item.sel { transform: scale(1.2); }
+  .olhar-item.foco { transform: scale(1.12); }
+  .olhar-anel {
+    --p: 0;
+    width: 40px; height: 40px; flex: none; border-radius: 50%; padding: 3px; box-sizing: border-box;
+    background: conic-gradient(#FFD60A calc(var(--p) * 1%), rgba(255,255,255,0.3) 0);
+  }
   .olhar-disco {
-    width: 76px; height: 76px; border-radius: 50%;
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    background: rgba(20,20,26,0.8); border: 3px solid rgba(255,255,255,0.3);
+    width: 100%; height: 100%; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(20,20,26,0.85); font-size: 17px; line-height: 1;
   }
-  .olhar-item.on .olhar-disco { background: rgba(20,120,100,0.9); }
-  .olhar-item.sel .olhar-disco { border-color: #FFD60A; }
-  .olhar-icone { font-size: 26px; line-height: 1; }
-  .olhar-rotulo { font-size: 9px; font-weight: 700; margin-top: 2px; }
-  .olhar-estado { margin-top: 7px; font-size: 11px; font-weight: 700; text-shadow: 0 1px 3px #000; }
-  .olhar-item.flash .olhar-disco { animation: olhar-flash 0.6s ease-out; }
+  .olhar-item.on .olhar-disco { background: rgba(20,120,100,0.95); }
+  .olhar-texto { display: flex; flex-direction: column; line-height: 1.15; text-shadow: 0 1px 3px #000; }
+  .olhar-rotulo { font-size: 10px; font-weight: 700; }
+  .olhar-estado { font-size: 9px; font-weight: 600; opacity: 0.9; }
+  .olhar-item.flash .olhar-anel { animation: olhar-flash 0.6s ease-out; }
   @keyframes olhar-flash {
     0% { box-shadow: 0 0 0 0 rgba(255,214,10,0.95); }
-    100% { box-shadow: 0 0 0 26px rgba(255,214,10,0); }
+    100% { box-shadow: 0 0 0 16px rgba(255,214,10,0); }
   }
-  .olhar-ajuda {
-    position: absolute; left: 50%; top: calc(50% + var(--e, 1) * 84px); transform: translateX(-50%) scale(var(--e, 1));
-    color: #fff; font: 600 10px system-ui, sans-serif; white-space: nowrap;
-    text-shadow: 0 1px 3px #000; opacity: 0; transition: opacity 0.2s;
+  .olhar-mira {
+    position: absolute; left: 50%; top: 50%; width: 10px; height: 10px;
+    margin: -5px 0 0 -5px; border-radius: 50%; box-sizing: border-box;
+    background: rgba(255,255,255,0.9); border: 2px solid rgba(0,0,0,0.6);
   }
-  .olhar-camada.aberto .olhar-ajuda { opacity: 0.9; }
-  /* Barra "olhe para cima": enche conforme a cabeça sobe; ao encher, aciona */
-  .olhar-subir {
-    position: absolute; left: 50%; top: calc(50% + var(--e, 1) * 108px); transform: translateX(-50%) scale(var(--e, 1));
-    width: 150px; opacity: 0; transition: opacity 0.2s; text-align: center;
-    color: #fff; font: 700 10px system-ui, sans-serif; text-shadow: 0 1px 3px #000;
-  }
-  .olhar-camada.aberto .olhar-subir { opacity: 1; }
-  .olhar-subir-trilho { height: 6px; margin-top: 3px; border-radius: 3px; background: rgba(255,255,255,0.25); overflow: hidden; }
-  .olhar-subir-fill { height: 100%; width: 0%; background: #FFD60A; }
 `;
 document.head.appendChild(estiloOlhar);
 
 const camadasOlhar = Array.from(document.querySelectorAll(".eye")).map((olho) => {
   const camada = document.createElement("div");
   camada.className = "olhar-camada";
-  const itensHtml = itensOlhar
-    .map(
-      (item) =>
-        '<div class="olhar-item"><div class="olhar-disco"><span class="olhar-icone">' +
-        item.icone +
-        '</span><span class="olhar-rotulo">' +
-        item.rotulo +
-        '</span></div><span class="olhar-estado"></span></div>'
-    )
-    .join("");
   camada.innerHTML =
-    '<div class="olhar-dica">▾ olhe para baixo: menu</div>' +
-    '<div class="olhar-subir">▲ olhe para cima para ligar/desligar<div class="olhar-subir-trilho"><div class="olhar-subir-fill"></div></div></div>' +
-    '<div class="olhar-menu">' + itensHtml + "</div>" +
-    '<div class="olhar-ajuda">◀ vire ou incline a cabeça ▶</div>';
+    '<div class="olhar-lista">' +
+    itensOlhar
+      .map(
+        (item) =>
+          '<div class="olhar-item"><div class="olhar-anel"><div class="olhar-disco">' + item.icone + "</div></div>" +
+          '<div class="olhar-texto"><span class="olhar-rotulo">' + item.rotulo + '</span><span class="olhar-estado"></span></div></div>'
+      )
+      .join("") +
+    '</div><div class="olhar-mira"></div>';
   olho.appendChild(camada);
   return {
     camada,
     itens: Array.from(camada.querySelectorAll(".olhar-item")),
-    barra: camada.querySelector(".olhar-subir-fill"),
+    discos: Array.from(camada.querySelectorAll(".olhar-anel")),
+    mira: camada.querySelector(".olhar-mira"),
   };
 });
 
 let olharYawBruto = 0;
 let olharPitchBruto = 0;
-let olharRollBruto = 0;
 let olharYaw = 0;
 let olharPitch = 0;
-let olharRoll = 0;
 let olharSensorOk = false;
 let textoSensor = "";
 
+let centroYaw = 0; // para onde a pessoa olha "em frente"
+let centroPitch = 0;
 let menuAberto = false;
-let podeAbrirMenu = true;
-let itemSelecionado = 1;
+let noCantoDesde = 0;
 let abertoEm = 0;
-let ultimoMovimentoEm = 0;
-let marcaYaw = 0;
-let marcaPitch = 0;
-let marcaRoll = 0;
-let centroYaw = 0;
-let centroRoll = 0;
-let armadoLateral = true;
-let ultimoPassoEm = 0;
-let armadoCima = true;
-let acimaDesde = 0;
+let itemOlhado = -1;
+let olhandoDesde = 0;
+let travadoAteSair = false; // depois de acionar, só aciona de novo após tirar a mira da opção
 
 function normalizar180(graus) {
   return ((((graus + 180) % 360) + 360) % 360) - 180;
 }
 
-// Converte os ângulos do sensor em: para onde a pessoa olha (vertical e giro)
-// e o quanto ela inclina a cabeça (orelha no ombro). Vale em qualquer posição
-// do celular.
+// Converte os ângulos do sensor em: para onde a pessoa olha (vertical e giro).
+// Vale em qualquer posição do celular.
 window.addEventListener("deviceorientation", (e) => {
   if (e.alpha == null || e.beta == null || e.gamma == null) return;
   const r = Math.PI / 180;
@@ -1235,39 +1208,10 @@ window.addEventListener("deviceorientation", (e) => {
   const z = -Math.cos(b) * Math.cos(g);
   olharPitchBruto = (Math.asin(Math.max(-1, Math.min(1, z))) * 180) / Math.PI;
   olharYawBruto = (Math.atan2(x, y) * 180) / Math.PI;
-
-  // Inclinação: onde fica o "para cima" do mundo no plano da tela. O eixo do
-  // celular que aponta mais para cima diz como ele está segurado (em pé ou
-  // deitado, de um lado ou de outro).
-  const ux = -Math.cos(b) * Math.sin(g);
-  const uy = Math.sin(b);
-  const uz = Math.cos(b) * Math.cos(g);
-  if (Math.abs(uz) < 0.85) {
-    let sx;
-    let sy;
-    if (Math.abs(ux) > Math.abs(uy)) {
-      if (ux > 0) {
-        sx = -uy;
-        sy = ux;
-      } else {
-        sx = uy;
-        sy = -ux;
-      }
-    } else if (uy > 0) {
-      sx = ux;
-      sy = uy;
-    } else {
-      sx = -ux;
-      sy = -uy;
-    }
-    olharRollBruto = (Math.atan2(-sx, sy) * 180) / Math.PI; // positivo = inclinou para a direita
-  }
-
   if (!olharSensorOk) {
     olharSensorOk = true;
-    olharYaw = olharYawBruto;
-    olharPitch = olharPitchBruto;
-    olharRoll = olharRollBruto;
+    olharYaw = centroYaw = olharYawBruto;
+    olharPitch = centroPitch = olharPitchBruto;
   }
 });
 
@@ -1286,57 +1230,34 @@ function vibrar(ms) {
   if (navigator.vibrate) navigator.vibrate(ms);
 }
 
-function desenharMenuOlhar() {
-  const progresso = menuAberto
-    ? Math.max(0, Math.min(1, (olharPitch + 5) / (OLHAR.olharParaCimaAcima + 5)))
-    : 0;
-  camadasOlhar.forEach(({ camada, itens, barra }) => {
-    camada.classList.toggle("aberto", menuAberto);
-    barra.style.width = (armadoCima ? progresso * 100 : 0).toFixed(0) + "%";
-    itens.forEach((el, i) => {
-      const ligado = itensOlhar[i].ligado();
-      el.classList.toggle("sel", menuAberto && i === itemSelecionado);
-      el.classList.toggle("on", ligado);
-      el.querySelector(".olhar-estado").textContent = ligado ? "ligado" : "desligado";
-    });
-  });
-}
-
-function abrirMenuOlhar(agora) {
-  menuAberto = true;
-  itemSelecionado = 1; // começa no do meio (Legenda)
-  abertoEm = agora;
-  ultimoMovimentoEm = agora;
-  marcaYaw = olharYaw;
-  marcaPitch = olharPitch;
-  marcaRoll = olharRoll;
-  centroYaw = olharYaw;
-  centroRoll = olharRoll;
-  armadoLateral = true;
-  ultimoPassoEm = agora;
-  armadoCima = olharPitch < OLHAR.rearmarAbaixoDe;
-  acimaDesde = 0;
-  vibrar(25);
-  avisar("Menu aberto: vire a cabeça e olhe para cima");
-  desenharMenuOlhar();
-}
-
-function fecharMenuOlhar() {
-  menuAberto = false;
-  podeAbrirMenu = false; // só abre de novo depois que a cabeça subir
-  desenharMenuOlhar();
-}
-
-function acionarItemSelecionado() {
-  itensOlhar[itemSelecionado].acionar();
+function acionarItem(i) {
+  itensOlhar[i].acionar();
   vibrar(90);
-  desenharMenuOlhar();
+  const ligado = itensOlhar[i].ligado();
+  avisar(itensOlhar[i].rotulo + (ligado ? " ligado" : " desligado"));
   camadasOlhar.forEach(({ itens }) => {
-    const el = itens[itemSelecionado];
+    const el = itens[i];
     el.classList.remove("flash");
     void el.offsetWidth; // reinicia a animação
     el.classList.add("flash");
   });
+}
+
+// Qual opção está sob a mira? Usa a posição real dos ícones na tela.
+function itemSobAMira(mx, my) {
+  const { camada, discos } = camadasOlhar[0];
+  const caixa = camada.getBoundingClientRect();
+  if (!caixa.width) return -1;
+  const px = caixa.left + (mx / 100) * caixa.width;
+  const py = caixa.top + (my / 100) * caixa.height;
+  for (let i = 0; i < discos.length; i++) {
+    const r = discos[i].getBoundingClientRect();
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    // área sensível um pouco maior que o ícone (e que se estende para o texto)
+    if (Math.abs(px - cx) < r.width * 1.1 && Math.abs(py - cy) < r.height * 0.75) return i;
+  }
+  return -1;
 }
 
 function atualizarOlhar(agora) {
@@ -1349,83 +1270,77 @@ function atualizarOlhar(agora) {
   // Suaviza o tremor da cabeça.
   olharYaw += normalizar180(olharYawBruto - olharYaw) * 0.3;
   olharPitch += (olharPitchBruto - olharPitch) * 0.3;
-  olharRoll += normalizar180(olharRollBruto - olharRoll) * 0.3;
-  textoSensor =
-    "cabeça: vertical " + olharPitch.toFixed(0) + "° (abre abaixo de " + OLHAR.abrirAbaixoDe + "°, aciona acima de +" +
-    OLHAR.olharParaCimaAcima + "°) · giro " + normalizar180(olharYaw - centroYaw).toFixed(0) + "° · inclinação " +
-    normalizar180(olharRoll - centroRoll).toFixed(0) + "° · menu " + (menuAberto ? "ABERTO" : "fechado");
 
+  // Posição da mira (% do olho): sai do centro conforme a cabeça se afasta do "em frente".
+  const dYaw = normalizar180(olharYaw - centroYaw);
+  const dPitch = olharPitch - centroPitch;
+  // Virar a cabeça para a esquerda leva a mira para a esquerda (e para cima, para cima).
+  const mx = 50 + Math.max(-60, Math.min(60, (dYaw / OLHAR.graus_horizontal) * 50));
+  const my = 50 - Math.max(-60, Math.min(60, (dPitch / OLHAR.graus_vertical) * 50));
+
+  // ---- Abrir / fechar as opções
   if (!menuAberto) {
-    if (!podeAbrirMenu) {
-      if (olharPitch > OLHAR.reabrirAcimaDe) podeAbrirMenu = true;
-      return;
-    }
-    if (olharPitch < OLHAR.abrirAbaixoDe) abrirMenuOlhar(agora);
-    return;
-  }
-
-  // Se mexeu o bastante, reinicia a contagem para o menu sumir.
-  const deslocamento = Math.hypot(
-    normalizar180(olharYaw - marcaYaw),
-    olharPitch - marcaPitch,
-    normalizar180(olharRoll - marcaRoll)
-  );
-  if (deslocamento > OLHAR.movimentoMinimo) {
-    marcaYaw = olharYaw;
-    marcaPitch = olharPitch;
-    marcaRoll = olharRoll;
-    ultimoMovimentoEm = agora;
-  }
-
-  // ---- Trocar de ícone: virar OU inclinar a cabeça. Um movimento troca um
-  // ícone; só troca de novo depois de voltar ao centro (assim a volta ao
-  // centro não desfaz a troca).
-  if (Math.abs(olharPitch) < 70) {
-    const giro = normalizar180(olharYaw - centroYaw) / OLHAR.girarParaTrocar;
-    const inclinacao = normalizar180(olharRoll - centroRoll) / OLHAR.inclinarParaTrocar;
-    const movimento = Math.abs(giro) > Math.abs(inclinacao) ? giro : inclinacao;
-
-    if (armadoLateral) {
-      if (Math.abs(movimento) > 1 && agora - ultimoPassoEm > OLHAR.pausaEntrePassosMs) {
-        const proximo = Math.max(0, Math.min(itensOlhar.length - 1, itemSelecionado + (movimento > 0 ? 1 : -1)));
-        if (proximo !== itemSelecionado) {
-          itemSelecionado = proximo;
-          vibrar(20);
-        }
-        armadoLateral = false;
-        ultimoPassoEm = agora;
-        ultimoMovimentoEm = agora;
+    if (mx < OLHAR.abrirAbaixoDeX) {
+      if (!noCantoDesde) noCantoDesde = agora;
+      if (agora - noCantoDesde > OLHAR.abrirSegurarMs) {
+        menuAberto = true;
+        abertoEm = agora;
+        itemOlhado = -1;
+        travadoAteSair = false;
+        vibrar(25);
       }
-    } else if (Math.abs(movimento) < OLHAR.voltarAoCentro) {
-      armadoLateral = true;
+    } else {
+      noCantoDesde = 0;
     }
+  } else if (mx > OLHAR.fecharAcimaDeX) {
+    menuAberto = false;
+    noCantoDesde = 0;
+    itemOlhado = -1;
+  }
 
-    // Parado perto do centro: o "centro" acompanha devagar a posição da cabeça
-    // (corrige o desvio do sensor e a mudança de postura).
-    if (Math.abs(movimento) < OLHAR.voltarAoCentro) {
-      centroYaw += normalizar180(olharYaw - centroYaw) * 0.05;
-      centroRoll += normalizar180(olharRoll - centroRoll) * 0.05;
+  // ---- Ligar/desligar: mira sobre a opção, esperando o anel encher
+  let alvo = -1;
+  let progresso = 0;
+  if (menuAberto) {
+    alvo = itemSobAMira(mx, my);
+    if (alvo !== itemOlhado) {
+      itemOlhado = alvo;
+      olhandoDesde = agora;
+      if (alvo === -1) travadoAteSair = false;
+    }
+    if (alvo !== -1 && !travadoAteSair && agora - abertoEm > OLHAR.esperaAposAbrirMs) {
+      progresso = Math.min(1, (agora - olhandoDesde) / OLHAR.tempoParaAcionarMs);
+      if (progresso >= 1) {
+        acionarItem(alvo);
+        travadoAteSair = true;
+        progresso = 0;
+      }
     }
   }
 
-  // ---- Ligar/desligar: olhar para CIMA do horizonte e segurar um instante.
-  if (olharPitch > OLHAR.olharParaCimaAcima) {
-    if (!acimaDesde) acimaDesde = agora;
-    if (armadoCima && agora - acimaDesde > OLHAR.segurarParaCimaMs && agora - abertoEm > OLHAR.tempoMinimoAbertoMs) {
-      acionarItemSelecionado();
-      armadoCima = false;
-      ultimoMovimentoEm = agora;
-    }
-  } else {
-    acimaDesde = 0;
+  // O "em frente" acompanha devagar a postura da cabeça, mas só com as opções
+  // fechadas (assim a mira não escapa enquanto a pessoa olha para o canto).
+  if (!menuAberto && OLHAR.recentrar > 0) {
+    centroYaw += normalizar180(olharYaw - centroYaw) * OLHAR.recentrar;
+    centroPitch += (olharPitch - centroPitch) * OLHAR.recentrar;
   }
-  if (!armadoCima && olharPitch < OLHAR.rearmarAbaixoDe) armadoCima = true;
 
-  if (agora - ultimoMovimentoEm > OLHAR.tempoSemMovimentoMs) {
-    fecharMenuOlhar();
-    return;
-  }
-  desenharMenuOlhar();
+  camadasOlhar.forEach(({ camada, itens, discos, mira }) => {
+    camada.classList.toggle("aberto", menuAberto);
+    mira.style.left = mx.toFixed(1) + "%";
+    mira.style.top = my.toFixed(1) + "%";
+    itens.forEach((el, i) => {
+      const ligado = itensOlhar[i].ligado();
+      el.classList.toggle("foco", i === alvo);
+      el.classList.toggle("on", ligado);
+      el.querySelector(".olhar-estado").textContent = ligado ? "ligado" : "desligado";
+      discos[i].style.setProperty("--p", i === alvo ? (progresso * 100).toFixed(0) : 0);
+    });
+  });
+
+  textoSensor =
+    "cabeça: vertical " + olharPitch.toFixed(0) + "° · giro " + dYaw.toFixed(0) + "° · mira " + mx.toFixed(0) + "%," +
+    my.toFixed(0) + "% · opções " + (menuAberto ? "ABERTAS" : "fechadas") + " · olhando: " + (alvo === -1 ? "nada" : itensOlhar[alvo].rotulo);
 }
 requestAnimationFrame(atualizarOlhar);
 
@@ -1694,3 +1609,121 @@ if (parametrosUrl.has("ajuste")) {
   });
   aplicarAjustes();
 }
+
+
+// ---------------------------------------------------------------
+// 7) Texto do sinal (glosa) sobre as pernas do avatar
+// ---------------------------------------------------------------
+// O avatar mostra, em letras pequenas acima da cabeça, a palavra que está
+// sinalizando. Aqui desligamos esse texto original e desenhamos o nosso sobre
+// as pernas dele (da cintura para baixo), com fundo branco e letra preta.
+// Para voltar ao texto original do VLibras: ?textoavatar=original
+const textoAvatarOriginal = parametrosUrl.get("textoavatar") === "original";
+let glosaAtual = "";
+let glosaEm = 0;
+let legendaUnityLigada = true; // o avatar começa com o texto ligado
+let instanciaUnity = null;
+let tentouDesligarTexto = false;
+let chamadasUnity = 0;
+let ultimaChamadaUnity = "-";
+
+function diagTextoAvatar() {
+  return "texto do sinal: avatar " + (instanciaUnity ? "achado" : "NÃO achado") + " · chamadas " + chamadasUnity + " (" + ultimaChamadaUnity + ") · glosa \"" + glosaAtual + "\" · original " + (legendaUnityLigada ? "ligado" : "desligado");
+}
+
+const estiloGlosa = document.createElement("style");
+estiloGlosa.textContent = `
+  .avatar-glosa {
+    position: absolute; left: 50%; bottom: 14%; transform: translateX(-50%);
+    z-index: 6; max-width: 96%; width: max-content; padding: 2px 8px;
+    background: #fff; color: #000; border-radius: 6px; text-align: center;
+    font: 800 clamp(10px, 2.1vw, 15px)/1.2 system-ui, sans-serif; text-transform: uppercase;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.5); opacity: 0; transition: opacity 0.12s; pointer-events: none;
+  }
+  .avatar-glosa.visivel { opacity: 1; }
+`;
+document.head.appendChild(estiloGlosa);
+
+const elementosGlosa = Array.from(document.querySelectorAll(".avatar-box")).map((caixa) => {
+  const el = document.createElement("div");
+  el.className = "avatar-glosa";
+  caixa.appendChild(el);
+  return el;
+});
+
+// Acha o objeto do Unity dentro do avatar (tem a função SendMessage).
+function acharInstanciaUnity(win) {
+  for (const nome of ["unityInstance", "gameInstance", "playerInstance"]) {
+    const v = win[nome];
+    if (v && typeof v.SendMessage === "function") return v;
+  }
+  const nomes = Object.getOwnPropertyNames(win);
+  for (const nome of nomes) {
+    try {
+      const v = win[nome];
+      if (v && (typeof v === "object" || typeof v === "function") && typeof v.SendMessage === "function") return v;
+    } catch (e) {}
+  }
+  // Um nível mais fundo (ex.: window.player.instance).
+  for (const nome of nomes) {
+    try {
+      const v = win[nome];
+      if (!v || typeof v !== "object" || v === win || v === win.document) continue;
+      for (const filho of Object.keys(v).slice(0, 40)) {
+        const w = v[filho];
+        if (w && typeof w === "object" && typeof w.SendMessage === "function") return w;
+      }
+    } catch (e) {}
+  }
+  return null;
+}
+
+function prepararTextoDoAvatar() {
+  if (textoAvatarOriginal) return;
+  setInterval(() => {
+    try {
+      const win = acharIframeDoAvatar()?.contentWindow;
+      if (!win) return;
+      if (!instanciaUnity) {
+        const inst = acharInstanciaUnity(win);
+        if (!inst || inst.__glosa) return;
+        const original = inst.SendMessage.bind(inst);
+        inst.SendMessage = function (objeto, metodo, valor) {
+          try {
+            chamadasUnity++;
+            ultimaChamadaUnity = metodo;
+            if (/glos/i.test(String(metodo)) && typeof valor === "string" && valor.trim()) {
+              glosaAtual = valor.trim();
+              glosaEm = Date.now();
+            } else if (metodo === "toggleSubtitle") {
+              legendaUnityLigada = !legendaUnityLigada;
+            }
+          } catch (e) {}
+          return original(objeto, metodo, valor);
+        };
+        inst.__glosa = true;
+        instanciaUnity = inst;
+        console.log("[VLibras] Texto do sinal: capturando.");
+      }
+      // Desliga o texto original do avatar (uma vez, depois que ele estiver pronto).
+      if (instanciaUnity && prontoEm && Date.now() - prontoEm > 2500 && !tentouDesligarTexto) {
+        tentouDesligarTexto = true;
+        if (legendaUnityLigada) instanciaUnity.SendMessage("Avatar", "toggleSubtitle", "");
+      }
+    } catch (e) {}
+  }, 500);
+}
+prepararTextoDoAvatar();
+
+setInterval(() => {
+  // Usa a glosa lida do avatar; se não deu para ler, mostra a frase enviada a ele.
+  const glosaValida = glosaAtual && Date.now() - glosaEm < 60000;
+  const texto = glosaValida ? glosaAtual : textoFallbackSinal;
+  const ultimo = Math.max(avatarParouEm, glosaEm, enviadoEm);
+  const visivel = vlibrasAtivo && !!texto && (avatarTocando || Date.now() - ultimo < 1500);
+  elementosGlosa.forEach((el) => {
+    if (el.textContent !== texto) el.textContent = texto;
+    el.classList.toggle("visivel", visivel);
+  });
+}, 120);
