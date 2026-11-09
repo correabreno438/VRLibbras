@@ -1158,11 +1158,13 @@ const OLHAR = {
   abrirGiroEsquerda: 12, // graus virando para a ESQUERDA para abrir as opções
   abrirSegurarMs: 250, // tempo mantendo o olhar à esquerda para abrir (evita abrir sem querer)
   trocarInclinacao: 8, // graus para CIMA/BAIXO para passar para a opção seguinte
-  segurarTrocaMs: 120, // tempo mantendo o olhar para cima/baixo para a troca valer
-  pausaEntreTrocasMs: 800, // tempo mínimo entre uma troca e outra (aumente se estiver rápido demais)
-  voltarAoCentroVertical: 5, // graus: abaixo disso conta como "voltou ao centro"
-  voltarAoCentroGiro: 5,
-  voltarAoCentroMs: 300, // tempo parado no centro para liberar a próxima troca (evita contar a "volta")
+  segurarTrocaMs: 180, // tempo mantendo o olhar para cima/baixo para a troca valer
+  pausaEntreTrocasMs: 700, // tempo mínimo entre uma troca e outra (aumente se estiver rápido demais)
+  voltarAoCentroVertical: 6, // graus: abaixo disso conta como "voltou ao centro"
+  voltarAoCentroGiro: 6,
+  voltarAoCentroMs: 200, // tempo no centro para liberar a próxima troca (evita contar a "volta")
+  liberarSozinhoMs: 1500, // se a cabeça já está abaixo do limite, libera a próxima troca depois deste tempo
+  ajusteInicialMs: 600, // logo que o menu abre, o centro acompanha a cabeça (descobre sua postura de descanso)
   selecionarGiroDireita: 10, // graus virando para a DIREITA para ligar/desligar
   segurarDireitaMs: 150, // tempo mantendo o olhar à direita
   tempoMinimoAbertoMs: 600, // logo depois de abrir, não aciona nada
@@ -1442,11 +1444,19 @@ function atualizarOlhar(agora) {
     ultimoMovimentoEm = agora;
   }
 
-  // Parado por um tempo dentro da zona neutra: o "centro" acompanha onde a pessoa
-  // descansa a cabeça (corrige o desvio do sensor e o cansaço do pescoço).
-  if (parado && Math.abs(dPitch) < OLHAR.trocarInclinacao * 0.7 && Math.abs(dYaw) < OLHAR.selecionarGiroDireita * 0.7) {
-    refYaw += dYaw * 0.08;
-    refPitch += dPitch * 0.08;
+  // Logo depois de abrir, o centro acompanha a cabeça: assim ele fica na postura em
+  // que a pessoa realmente descansa (e não onde ela estava no instante em que abriu).
+  // Depois disso, só uma correção bem lenta do desvio do sensor.
+  if (agora - abertoEm < OLHAR.ajusteInicialMs) {
+    // (só acompanha movimentos lentos de ajuste; um gesto rápido continua valendo)
+    // e só pequenos desvios (até ~6°) são absorvidos, devagar.
+    if (velocidade < 8 && Math.abs(dPitch) < OLHAR.trocarInclinacao * 0.75 && Math.abs(dYaw) < OLHAR.selecionarGiroDireita * 0.75) {
+      refYaw += dYaw * 0.05;
+      refPitch += dPitch * 0.05;
+    }
+  } else if (Math.abs(dPitch) < OLHAR.trocarInclinacao * 0.5 && Math.abs(dYaw) < OLHAR.selecionarGiroDireita * 0.5) {
+    refYaw += dYaw * 0.01;
+    refPitch += dPitch * 0.01;
   }
 
   // ---- TAB: para cima = opção anterior, para baixo = próxima (dá a volta).
@@ -1474,6 +1484,8 @@ function atualizarOlhar(agora) {
     if (agora - neutroVertDesde > OLHAR.voltarAoCentroMs) armadoVertical = true;
   } else {
     neutroVertDesde = 0;
+    // Segurança: se a cabeça já está abaixo do limite de troca por um bom tempo, libera.
+    if (Math.abs(dPitch) < OLHAR.trocarInclinacao && agora - ultimaTrocaEm > OLHAR.liberarSozinhoMs) armadoVertical = true;
   }
 
   // ---- Direita: liga/desligar a opção selecionada.
@@ -1498,7 +1510,10 @@ function atualizarOlhar(agora) {
       if (dYaw < OLHAR.voltarAoCentroGiro) {
         if (!neutroGiroDesde) neutroGiroDesde = agora;
         if (agora - neutroGiroDesde > OLHAR.voltarAoCentroMs) armadoDireita = true;
-      } else neutroGiroDesde = 0;
+      } else {
+        neutroGiroDesde = 0;
+        if (agora - ultimoAcionamentoEm > OLHAR.liberarSozinhoMs) armadoDireita = true;
+      }
     }
   }
 
