@@ -861,7 +861,7 @@ function calcularNivel(amostras) {
 let transcricaoAtiva = false;
 let timerAviso = null;
 
-const DICA_INICIAL = "Olhe para a esquerda para abrir as opções";
+const DICA_INICIAL = "Leve a mira ao canto esquerdo para abrir as opções";
 
 function avisar(mensagem, voltarPara) {
   statusEl.textContent = mensagem;
@@ -1144,33 +1144,25 @@ micBtn.addEventListener("click", async () => {
 });
 
 // ---------------------------------------------------------------
-// 5) Menu por movimentos de cabeça (sem tocar no celular, sem falar)
+// 5) Controle pela cabeça com mira (sem tocar no celular, sem falar)
 // ---------------------------------------------------------------
-// Funciona como a tecla TAB de um teclado:
-//   1) OLHE PARA A ESQUERDA: as opções aparecem no lado esquerdo.
-//   2) OLHE PARA CIMA ou PARA BAIXO: a seleção (borda amarela) passa para a
-//      opção de cima / de baixo. Cada movimento troca uma opção (e dá a volta:
-//      depois da última vem a primeira). Volte a cabeça ao centro para trocar de novo.
-//   3) OLHE PARA A DIREITA: liga ou desliga a opção selecionada.
-// Se a pessoa ficar uns 3 segundos sem se mexer, as opções somem sozinhas.
+// Uma mira (pontinho) acompanha o movimento da cabeça.
+//   1) Leve a mira até a BORDA ESQUERDA da imagem: as opções aparecem ali,
+//      em coluna, pequenas.
+//   2) Leve a mira para CIMA de uma opção e fique olhando: um anel enche e,
+//      quando fecha, a opção liga ou desliga.
+//   3) Volte a mira para o CENTRO: as opções somem.
 // Usa o giroscópio do celular (funciona offline).
 const OLHAR = {
-  abrirGiroEsquerda: 12, // graus virando para a ESQUERDA para abrir as opções
-  abrirSegurarMs: 250, // tempo mantendo o olhar à esquerda para abrir (evita abrir sem querer)
-  trocarInclinacao: 8, // graus para CIMA/BAIXO para passar para a opção seguinte
-  segurarTrocaMs: 180, // tempo mantendo o olhar para cima/baixo para a troca valer
-  pausaEntreTrocasMs: 700, // tempo mínimo entre uma troca e outra (aumente se estiver rápido demais)
-  voltarAoCentroVertical: 6, // graus: abaixo disso conta como "voltou ao centro"
-  voltarAoCentroGiro: 6,
-  voltarAoCentroMs: 200, // tempo no centro para liberar a próxima troca (evita contar a "volta")
-  liberarSozinhoMs: 1500, // se a cabeça já está abaixo do limite, libera a próxima troca depois deste tempo
-  ajusteInicialMs: 600, // logo que o menu abre, o centro acompanha a cabeça (descobre sua postura de descanso)
-  selecionarGiroDireita: 10, // graus virando para a DIREITA para ligar/desligar
-  segurarDireitaMs: 150, // tempo mantendo o olhar à direita
-  tempoMinimoAbertoMs: 600, // logo depois de abrir, não aciona nada
-  movimentoMinimo: 3, // graus que contam como "se mexeu" (para as opções não sumirem)
-  tempoSemMovimentoMs: 3000, // sem se mexer por esse tempo, as opções somem
-  recentrar: 0.002, // quão rápido o "em frente" acompanha a postura da cabeça (0 = nunca)
+  graus_horizontal: 24, // giro da cabeça que leva a mira do centro até a borda
+  graus_vertical: 20, // subida/descida da cabeça que leva a mira do centro até a borda
+  abrirAbaixoDeX: 14, // % da largura: mira abaixo disso (borda esquerda) abre as opções
+  fecharAcimaDeX: 36, // % da largura: mira passando disso (voltou ao centro) fecha as opções
+  abrirSegurarMs: 250, // tempo com a mira na borda para abrir (evita abrir sem querer)
+  tempoParaAcionarMs: 1200, // tempo com a mira sobre a opção até ligar/desligar
+  esperaAposAbrirMs: 600, // logo que abre, não aciona nada por este tempo
+  margemMira: 6, // % de folga: a mira para nesta distância da borda da imagem
+  recentrar: 0.002, // quão rápido o "centro" acompanha a postura da cabeça (0 = nunca)
 };
 
 const itensOlhar = [
@@ -1203,19 +1195,19 @@ estiloOlhar.textContent = `
   .olhar-lista {
     position: absolute; left: 0; top: 50%; transform: translateY(-50%);
     display: flex; flex-direction: column; gap: 10px;
-    opacity: 0; visibility: hidden; transition: opacity 0.2s;
+    opacity: 0; visibility: hidden; transition: opacity 0.15s;
   }
   .olhar-camada.aberto .olhar-lista { opacity: 1; visibility: visible; }
   .olhar-item {
     display: flex; align-items: center; gap: 6px; color: #fff;
-    font-family: system-ui, sans-serif; transition: transform 0.18s; transform-origin: left center;
+    font-family: system-ui, sans-serif; transition: transform 0.15s; transform-origin: left center;
   }
-  .olhar-item.sel { transform: scale(1.12); }
+  .olhar-item.foco { transform: scale(1.12); }
   .olhar-anel {
+    --p: 0;
     width: 40px; height: 40px; flex: none; border-radius: 50%; padding: 3px; box-sizing: border-box;
-    background: rgba(255,255,255,0.3); transition: background 0.18s;
+    background: conic-gradient(#FFD60A calc(var(--p) * 1%), rgba(255,255,255,0.3) 0);
   }
-  .olhar-item.sel .olhar-anel { background: #FFD60A; }
   .olhar-disco {
     width: 100%; height: 100%; border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
@@ -1225,14 +1217,15 @@ estiloOlhar.textContent = `
   .olhar-texto { display: flex; flex-direction: column; line-height: 1.15; text-shadow: 0 1px 3px #000; }
   .olhar-rotulo { font-size: 10px; font-weight: 700; }
   .olhar-estado { font-size: 9px; font-weight: 600; opacity: 0.9; }
-  .olhar-ajuda {
-    margin-top: 2px; font: 600 8px/1.3 system-ui, sans-serif; color: #fff; opacity: 0.85;
-    text-shadow: 0 1px 3px #000; white-space: nowrap;
-  }
   .olhar-item.flash .olhar-anel { animation: olhar-flash 0.6s ease-out; }
   @keyframes olhar-flash {
     0% { box-shadow: 0 0 0 0 rgba(255,214,10,0.95); }
     100% { box-shadow: 0 0 0 16px rgba(255,214,10,0); }
+  }
+  .olhar-mira {
+    position: absolute; left: 50%; top: 50%; width: 10px; height: 10px;
+    margin: -5px 0 0 -5px; border-radius: 50%; box-sizing: border-box;
+    background: rgba(255,255,255,0.9); border: 2px solid rgba(0,0,0,0.6);
   }
 `;
 document.head.appendChild(estiloOlhar);
@@ -1249,9 +1242,14 @@ const camadasOlhar = Array.from(document.querySelectorAll(".eye")).map((olho) =>
           '<div class="olhar-texto"><span class="olhar-rotulo">' + item.rotulo + '</span><span class="olhar-estado"></span></div></div>'
       )
       .join("") +
-    '<div class="olhar-ajuda">▲▼ trocar · ▶ ligar/desligar</div></div>';
+    '</div><div class="olhar-mira"></div>';
   olho.appendChild(camada);
-  return { camada, itens: Array.from(camada.querySelectorAll(".olhar-item")) };
+  return {
+    camada,
+    itens: Array.from(camada.querySelectorAll(".olhar-item")),
+    discos: Array.from(camada.querySelectorAll(".olhar-anel")),
+    mira: camada.querySelector(".olhar-mira"),
+  };
 });
 
 let olharYawBruto = 0;
@@ -1264,28 +1262,18 @@ let textoSensor = "";
 let centroYaw = 0; // para onde a pessoa olha "em frente"
 let centroPitch = 0;
 let menuAberto = false;
-let podeAbrirMenu = true;
-let aEsquerdaDesde = 0;
-let itemSelecionado = -1; // -1 = nenhuma opção selecionada ainda
+let noCantoDesde = 0;
 let abertoEm = 0;
-let ultimoMovimentoEm = 0;
-let marcaYaw = 0;
-let marcaPitch = 0;
-let refYaw = 0; // posição de referência com as opções abertas
-let refPitch = 0;
-let armadoVertical = true;
-let ultimaTrocaEm = 0;
-let armadoDireita = true;
-let aDireitaDesde = 0;
+let itemOlhado = -1;
 let chaveOlhar = "";
-let vertDesde = 0;
-let neutroVertDesde = 0;
-let neutroGiroDesde = 0;
-let ultimoAcionamentoEm = 0;
-let yawAnterior = 0;
-let pitchAnterior = 0;
-let quadroAnteriorEm = 0;
-let paradoDesde = 0; // desde quando a cabeça está quase parada
+let yawAnteriorMira = 0;
+let pitchAnteriorMira = 0;
+let quadroAnteriorMira = 0;
+let paradoMiraDesde = 0;
+let miraXAnterior = -1;
+let miraYAnterior = -1;
+let olhandoDesde = 0;
+let travadoAteSair = false; // depois de acionar, só aciona de novo após tirar a mira da opção
 
 function normalizar180(graus) {
   return ((((graus + 180) % 360) + 360) % 360) - 180;
@@ -1326,58 +1314,34 @@ function vibrar(ms) {
   if (navigator.vibrate) navigator.vibrate(ms);
 }
 
-function desenharMenuOlhar() {
-  const chave = [menuAberto ? 1 : 0, itemSelecionado, itensOlhar.map((i) => (i.ligado() ? 1 : 0)).join("")].join("|");
-  if (chave === chaveOlhar) return;
-  chaveOlhar = chave;
-  camadasOlhar.forEach(({ camada, itens }) => {
-    camada.classList.toggle("aberto", menuAberto);
-    itens.forEach((el, i) => {
-      const ligado = itensOlhar[i].ligado();
-      el.classList.toggle("sel", menuAberto && i === itemSelecionado);
-      el.classList.toggle("on", ligado);
-      const estado = ligado ? "ligado" : "desligado";
-      const rotulo = el.querySelector(".olhar-estado");
-      if (rotulo.textContent !== estado) rotulo.textContent = estado;
-    });
-  });
-}
-
-function abrirMenuOlhar(agora) {
-  menuAberto = true;
-  itemSelecionado = -1;
-  abertoEm = agora;
-  ultimoMovimentoEm = agora;
-  refYaw = marcaYaw = olharYaw;
-  refPitch = marcaPitch = olharPitch;
-  armadoVertical = true;
-  armadoDireita = true;
-  aDireitaDesde = 0;
-  ultimaTrocaEm = agora - OLHAR.pausaEntreTrocasMs + 400; // a 1ª troca vale logo (após ~0,4 s)
-  vibrar(25);
-  desenharMenuOlhar();
-}
-
-function fecharMenuOlhar() {
-  menuAberto = false;
-  podeAbrirMenu = false; // só abre de novo depois que a cabeça voltar ao centro
-  aEsquerdaDesde = 0;
-  desenharMenuOlhar();
-}
-
-function acionarItemSelecionado() {
-  const i = itemSelecionado;
+function acionarItem(i) {
   itensOlhar[i].acionar();
   vibrar(90);
   const ligado = itensOlhar[i].ligado();
   avisar(itensOlhar[i].rotulo + (ligado ? " ligado" : " desligado"));
-  desenharMenuOlhar();
   camadasOlhar.forEach(({ itens }) => {
     const el = itens[i];
     el.classList.remove("flash");
     void el.offsetWidth; // reinicia a animação
     el.classList.add("flash");
   });
+}
+
+// Qual opção está sob a mira? Usa a posição real dos ícones na tela.
+function itemSobAMira(mx, my) {
+  const { camada, discos } = camadasOlhar[0];
+  const caixa = camada.getBoundingClientRect();
+  if (!caixa.width) return -1;
+  const px = caixa.left + (mx / 100) * caixa.width;
+  const py = caixa.top + (my / 100) * caixa.height;
+  for (let i = 0; i < discos.length; i++) {
+    const r = discos[i].getBoundingClientRect();
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    // área sensível um pouco maior que o ícone (e que se estende para o texto)
+    if (Math.abs(px - cx) < r.width * 1.1 && Math.abs(py - cy) < r.height * 0.75) return i;
+  }
+  return -1;
 }
 
 function atualizarOlhar(agora) {
@@ -1391,137 +1355,116 @@ function atualizarOlhar(agora) {
   olharYaw += normalizar180(olharYawBruto - olharYaw) * 0.3;
   olharPitch += (olharPitchBruto - olharPitch) * 0.3;
 
-  // A cabeça está parada? (usado para o "centro" acompanhar onde a pessoa descansa)
-  const dtQuadro = Math.max(1, agora - quadroAnteriorEm) / 1000;
-  const velocidade = Math.hypot(normalizar180(olharYaw - yawAnterior), olharPitch - pitchAnterior) / dtQuadro;
-  yawAnterior = olharYaw;
-  pitchAnterior = olharPitch;
-  quadroAnteriorEm = agora;
-  if (velocidade < 10) {
-    if (!paradoDesde) paradoDesde = agora;
-  } else paradoDesde = 0;
-  const parado = paradoDesde && agora - paradoDesde > 350;
+  // Posição da mira (% do olho): sai do centro conforme a cabeça se afasta do "em frente".
+  // A mira é "elástica": nunca sai da imagem visível. Se a cabeça passa do
+  // limite, a mira fica parada na borda e o "em frente" é puxado junto, então
+  // para voltar basta mexer a cabeça de volta (sem precisar desfazer o excesso).
+  const limiteX = ((50 - OLHAR.margemMira) / 50) * OLHAR.graus_horizontal;
+  const limiteY = ((50 - OLHAR.margemMira) / 50) * OLHAR.graus_vertical;
+  let dYaw = normalizar180(olharYaw - centroYaw);
+  let dPitch = olharPitch - centroPitch;
+  if (Math.abs(dYaw) > limiteX) {
+    const preso = Math.sign(dYaw) * limiteX;
+    centroYaw += dYaw - preso;
+    dYaw = preso;
+  }
+  if (Math.abs(dPitch) > limiteY) {
+    const preso = Math.sign(dPitch) * limiteY;
+    centroPitch += dPitch - preso;
+    dPitch = preso;
+  }
+  // Virar a cabeça para a esquerda leva a mira para a esquerda (e para cima, para cima).
+  const mx = 50 + (dYaw / OLHAR.graus_horizontal) * 50;
+  const my = 50 - (dPitch / OLHAR.graus_vertical) * 50;
 
+  // ---- Abrir / fechar as opções
   if (!menuAberto) {
-    // Giro e inclinação em relação ao "em frente". Negativo = esquerda.
-    const dYaw = normalizar180(olharYaw - centroYaw);
-    const dPitch = olharPitch - centroPitch;
-    textoSensor = "cabeça: giro " + dYaw.toFixed(0) + "° (abre abaixo de -" + OLHAR.abrirGiroEsquerda + "°) · vertical " + dPitch.toFixed(0) + "° · menu fechado";
-
-    if (!podeAbrirMenu) {
-      if (Math.abs(dYaw) < OLHAR.abrirGiroEsquerda * 0.5) podeAbrirMenu = true;
-    } else if (dYaw < -OLHAR.abrirGiroEsquerda) {
-      if (!aEsquerdaDesde) aEsquerdaDesde = agora;
-      if (agora - aEsquerdaDesde > OLHAR.abrirSegurarMs) abrirMenuOlhar(agora);
+    if (mx < OLHAR.abrirAbaixoDeX) {
+      if (!noCantoDesde) noCantoDesde = agora;
+      if (agora - noCantoDesde > OLHAR.abrirSegurarMs) {
+        menuAberto = true;
+        abertoEm = agora;
+        itemOlhado = -1;
+        travadoAteSair = false;
+        vibrar(25);
+      }
     } else {
-      aEsquerdaDesde = 0;
+      noCantoDesde = 0;
     }
-    // O "em frente" acompanha devagar a postura (corrige o desvio do sensor).
-    if (OLHAR.recentrar > 0 && Math.abs(dYaw) < OLHAR.abrirGiroEsquerda * 0.6) {
-      centroYaw += dYaw * OLHAR.recentrar;
-      centroPitch += dPitch * OLHAR.recentrar;
-    }
-    // Parado por um tempo: o centro vai para onde a pessoa está descansando.
-    if (parado && Math.abs(dYaw) < OLHAR.abrirGiroEsquerda * 0.8) {
-      centroYaw += dYaw * 0.06;
-      centroPitch += dPitch * 0.06;
-    }
-    return;
+  } else if (mx > OLHAR.fecharAcimaDeX) {
+    menuAberto = false;
+    noCantoDesde = 0;
+    itemOlhado = -1;
   }
 
-  // ---- Menu aberto. Tudo é medido a partir da posição em que ele abriu.
-  const dYaw = normalizar180(olharYaw - refYaw);
-  const dPitch = olharPitch - refPitch;
+  // ---- Ligar/desligar: mira sobre a opção, esperando o anel encher
+  let alvo = -1;
+  let progresso = 0;
+  if (menuAberto) {
+    alvo = itemSobAMira(mx, my);
+    if (alvo !== itemOlhado) {
+      itemOlhado = alvo;
+      olhandoDesde = agora;
+      if (alvo === -1) travadoAteSair = false;
+    }
+    if (alvo !== -1 && !travadoAteSair && agora - abertoEm > OLHAR.esperaAposAbrirMs) {
+      progresso = Math.min(1, (agora - olhandoDesde) / OLHAR.tempoParaAcionarMs);
+      if (progresso >= 1) {
+        acionarItem(alvo);
+        travadoAteSair = true;
+        progresso = 0;
+      }
+    }
+  }
+
+  // Cabeça parada com a mira perto do meio: o centro vai para onde a pessoa está
+  // olhando, e a mira volta para o meio da imagem.
+  const velocidadeCabeca = Math.hypot(normalizar180(olharYaw - yawAnteriorMira), olharPitch - pitchAnteriorMira) / Math.max(0.001, (agora - quadroAnteriorMira) / 1000);
+  yawAnteriorMira = olharYaw;
+  pitchAnteriorMira = olharPitch;
+  quadroAnteriorMira = agora;
+  if (velocidadeCabeca < 10) {
+    if (!paradoMiraDesde) paradoMiraDesde = agora;
+  } else paradoMiraDesde = 0;
+  if (!menuAberto && paradoMiraDesde && agora - paradoMiraDesde > 500 && Math.abs(mx - 50) < 28 && Math.abs(my - 50) < 28) {
+    centroYaw += dYaw * 0.05;
+    centroPitch += dPitch * 0.05;
+  }
+
+  // O "em frente" acompanha devagar a postura da cabeça, mas só com as opções
+  // fechadas (assim a mira não escapa enquanto a pessoa olha para o canto).
+  if (!menuAberto && OLHAR.recentrar > 0) {
+    centroYaw += normalizar180(olharYaw - centroYaw) * OLHAR.recentrar;
+    centroPitch += (olharPitch - centroPitch) * OLHAR.recentrar;
+  }
+
+  const chave = [menuAberto ? 1 : 0, alvo, Math.round(progresso * 50), itensOlhar.map((i) => (i.ligado() ? 1 : 0)).join("")].join("|");
+  const miraMudou = Math.abs(mx - miraXAnterior) > 0.15 || Math.abs(my - miraYAnterior) > 0.15;
+  if (miraMudou) {
+    miraXAnterior = mx;
+    miraYAnterior = my;
+  }
+  if (miraMudou || chave !== chaveOlhar) {
+    chaveOlhar = chave;
+    camadasOlhar.forEach(({ camada, itens, discos, mira }) => {
+      camada.classList.toggle("aberto", menuAberto);
+      mira.style.left = mx.toFixed(1) + "%";
+      mira.style.top = my.toFixed(1) + "%";
+      itens.forEach((el, i) => {
+        const ligado = itensOlhar[i].ligado();
+        el.classList.toggle("foco", i === alvo);
+        el.classList.toggle("on", ligado);
+        const estado = ligado ? "ligado" : "desligado";
+        const rotuloEstado = el.querySelector(".olhar-estado");
+        if (rotuloEstado.textContent !== estado) rotuloEstado.textContent = estado;
+        discos[i].style.setProperty("--p", i === alvo ? (progresso * 100).toFixed(0) : 0);
+      });
+    });
+  }
+
   textoSensor =
-    "cabeça: giro " + dYaw.toFixed(0) + "° (liga/desliga acima de +" + OLHAR.selecionarGiroDireita + "°) · vertical " +
-    dPitch.toFixed(0) + "° (troca além de ±" + OLHAR.trocarInclinacao + "°) · opção " + (itemSelecionado + 1) + "/" + itensOlhar.length;
-
-  // Se mexeu o bastante, reinicia a contagem para o menu sumir.
-  const deslocamento = Math.hypot(normalizar180(olharYaw - marcaYaw), olharPitch - marcaPitch);
-  if (deslocamento > OLHAR.movimentoMinimo) {
-    marcaYaw = olharYaw;
-    marcaPitch = olharPitch;
-    ultimoMovimentoEm = agora;
-  }
-
-  // Logo depois de abrir, o centro acompanha a cabeça: assim ele fica na postura em
-  // que a pessoa realmente descansa (e não onde ela estava no instante em que abriu).
-  // Depois disso, só uma correção bem lenta do desvio do sensor.
-  if (agora - abertoEm < OLHAR.ajusteInicialMs) {
-    // (só acompanha movimentos lentos de ajuste; um gesto rápido continua valendo)
-    // e só pequenos desvios (até ~6°) são absorvidos, devagar.
-    if (velocidade < 8 && Math.abs(dPitch) < OLHAR.trocarInclinacao * 0.75 && Math.abs(dYaw) < OLHAR.selecionarGiroDireita * 0.75) {
-      refYaw += dYaw * 0.05;
-      refPitch += dPitch * 0.05;
-    }
-  } else if (Math.abs(dPitch) < OLHAR.trocarInclinacao * 0.5 && Math.abs(dYaw) < OLHAR.selecionarGiroDireita * 0.5) {
-    refYaw += dYaw * 0.01;
-    refPitch += dPitch * 0.01;
-  }
-
-  // ---- TAB: para cima = opção anterior, para baixo = próxima (dá a volta).
-  // Depois de uma troca, só vale outra quando a cabeça ficar um instante parada
-  // no centro; assim o movimento de VOLTAR ao centro não conta como troca.
-  if (armadoVertical) {
-    if (Math.abs(dPitch) > OLHAR.trocarInclinacao && agora - ultimaTrocaEm > OLHAR.pausaEntreTrocasMs) {
-      if (!vertDesde) vertDesde = agora;
-      if (agora - vertDesde > OLHAR.segurarTrocaMs) {
-        const n = itensOlhar.length;
-        if (itemSelecionado < 0) itemSelecionado = dPitch > 0 ? n - 1 : 0;
-        else itemSelecionado = (itemSelecionado + (dPitch > 0 ? -1 : 1) + n) % n;
-        armadoVertical = false;
-        neutroVertDesde = 0;
-        vertDesde = 0;
-        ultimaTrocaEm = agora;
-        ultimoMovimentoEm = agora;
-        vibrar(20);
-      }
-    } else {
-      vertDesde = 0;
-    }
-  } else if (Math.abs(dPitch) < OLHAR.voltarAoCentroVertical) {
-    if (!neutroVertDesde) neutroVertDesde = agora;
-    if (agora - neutroVertDesde > OLHAR.voltarAoCentroMs) armadoVertical = true;
-  } else {
-    neutroVertDesde = 0;
-    // Segurança: se a cabeça já está abaixo do limite de troca por um bom tempo, libera.
-    if (Math.abs(dPitch) < OLHAR.trocarInclinacao && agora - ultimaTrocaEm > OLHAR.liberarSozinhoMs) armadoVertical = true;
-  }
-
-  // ---- Direita: liga/desligar a opção selecionada.
-  if (dYaw > OLHAR.selecionarGiroDireita) {
-    neutroGiroDesde = 0;
-    if (!aDireitaDesde) aDireitaDesde = agora;
-    if (armadoDireita && agora - aDireitaDesde > OLHAR.segurarDireitaMs && agora - abertoEm > OLHAR.tempoMinimoAbertoMs && agora - ultimoAcionamentoEm > OLHAR.pausaEntreTrocasMs) {
-      if (itemSelecionado >= 0) {
-        acionarItemSelecionado();
-        armadoDireita = false;
-        ultimoAcionamentoEm = agora;
-        ultimoMovimentoEm = agora;
-      } else {
-        // Sem opção escolhida, virar para a direita é só voltar: fecha o menu.
-        fecharMenuOlhar();
-        return;
-      }
-    }
-  } else {
-    aDireitaDesde = 0;
-    if (!armadoDireita) {
-      if (dYaw < OLHAR.voltarAoCentroGiro) {
-        if (!neutroGiroDesde) neutroGiroDesde = agora;
-        if (agora - neutroGiroDesde > OLHAR.voltarAoCentroMs) armadoDireita = true;
-      } else {
-        neutroGiroDesde = 0;
-        if (agora - ultimoAcionamentoEm > OLHAR.liberarSozinhoMs) armadoDireita = true;
-      }
-    }
-  }
-
-  if (agora - ultimoMovimentoEm > OLHAR.tempoSemMovimentoMs) {
-    fecharMenuOlhar();
-    return;
-  }
-  desenharMenuOlhar();
+    "cabeça: vertical " + olharPitch.toFixed(0) + "° · giro " + dYaw.toFixed(0) + "° · mira " + mx.toFixed(0) + "%," +
+    my.toFixed(0) + "% · opções " + (menuAberto ? "ABERTAS" : "fechadas") + " · olhando: " + (alvo === -1 ? "nada" : itensOlhar[alvo].rotulo);
 }
 requestAnimationFrame(atualizarOlhar);
 
