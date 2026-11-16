@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+<defs>
+  <linearGradient id="fundo" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#17c3b2"/><stop offset="0.55" stop-color="#1b6fa8"/><stop offset="1" stop-color="#26237a"/>
+  </linearGradient>
+  <radialGradient id="brilho" cx="0.25" cy="0.15" r="0.7">
+    <stop offset="0" stop-color="#ffffff" stop-opacity="0.38"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+  </radialGradient>
+  <linearGradient id="lente" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#1d4f7c"/><stop offset="1" stop-color="#0f2d4d"/>
+  </linearGradient>
+  <linearGradient id="avatar" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#ffb066"/><stop offset="1" stop-color="#ff7a45"/>
+  </linearGradient>
+  <clipPath id="recorte"><rect width="512" height="512" rx="112"/></clipPath>
+</defs>
+<g clip-path="url(#recorte)">
+  <rect width="512" height="512" fill="url(#fundo)"/>
+  <rect width="512" height="512" fill="url(#brilho)"/>
+  <g transform="translate(256 256) scale(1.0) translate(-256 -256)">
+    <!-- cantos de visor de realidade aumentada -->
+    <g fill="none" stroke="#ffffff" stroke-opacity="0.7" stroke-width="11" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M84 150 V108 H126"/><path d="M386 108 H428 V150"/>
+      <path d="M84 362 V404 H126"/><path d="M386 404 H428 V362"/>
+    </g>
+    <!-- alças -->
+    <rect x="34" y="214" width="40" height="84" rx="20" fill="#ffffff" fill-opacity="0.92"/>
+    <rect x="438" y="214" width="40" height="84" rx="20" fill="#ffffff" fill-opacity="0.92"/>
+    <!-- óculos -->
+    <rect x="60" y="160" width="392" height="192" rx="92" fill="#ffffff"/>
+    <rect x="74" y="174" width="364" height="164" rx="80" fill="#0a1d36"/>
+    <rect x="90" y="190" width="156" height="132" rx="56" fill="url(#lente)"/>
+    <rect x="266" y="190" width="156" height="132" rx="56" fill="url(#lente)"/>
+    <!-- olho esquerdo: legenda -->
+    <g fill="#ffffff">
+      <rect x="116" y="226" width="104" height="13" rx="6.5"/>
+      <rect x="116" y="252" width="82" height="13" rx="6.5"/>
+      <rect x="116" y="278" width="56" height="13" rx="6.5" fill-opacity="0.75"/>
+    </g>
+    <!-- olho direito: avatar de Libras -->
+    <circle cx="344" cy="245" r="24" fill="url(#avatar)"/>
+    <path d="M298 312 Q298 276 344 276 Q390 276 390 312 Z" fill="url(#avatar)"/>
+    <!-- brilho nas lentes -->
+    <path d="M108 214 Q118 198 142 196" fill="none" stroke="#ffffff" stroke-opacity="0.45" stroke-width="7" stroke-linecap="round"/>
+    <path d="M284 214 Q294 198 318 196" fill="none" stroke="#ffffff" stroke-opacity="0.45" stroke-width="7" stroke-linecap="round"/>
+  </g>
+</g></svg>

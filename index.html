@@ -4,6 +4,14 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>LIBRAS VR - MVP</title>
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <meta name="theme-color" content="#000000" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="LIBRAS VR" />
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" href="./icons/icon-192.png" />
   <style>
     :root {
       --avatar-width: 240px;
@@ -100,6 +108,7 @@
       border-radius: 999px;
       max-width: 50vw;
     }
+    #status.erro { background: #8a1f11; color: #fff; }
     #status.offline {
       background: rgba(180, 60, 20, 0.65);
     }
@@ -297,7 +306,7 @@
   <div id="captionBar">Leve a mira ao canto esquerdo para abrir as opções</div>
 
   <!-- Widget oficial do VLibras (cópia local em public/vlibras-app). A tradução precisa de internet. -->
-  <script src="/vlibras-app/vlibras-plugin.js"></script>
+  <script src="./vlibras-app/vlibras-plugin.js"></script>
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>

@@ -1,0 +1,20 @@
+{
+  "name": "LibrAR",
+  "short_name": "LibrAR",
+  "description": "Legendas e avatar de Libras em realidade virtual, controlados pela cabeça.",
+  "lang": "pt-BR",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "landscape",
+  "background_color": "#0a1d36",
+  "theme_color": "#0a1d36",
+  "categories": ["accessibility", "education"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
